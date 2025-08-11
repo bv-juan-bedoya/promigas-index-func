@@ -1,0 +1,13 @@
+azure-functions
+azure-storage-blob
+azure-data-tables
+azure.keyvault
+azure.identity
+openai
+requests
+PyPDF2
+Pillow
+PyMuPDF
+azure-ai-formrecognizer
+Office365-REST-Python-Client
+azure-core
