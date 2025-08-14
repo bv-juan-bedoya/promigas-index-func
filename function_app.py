@@ -14,8 +14,6 @@ import requests
 import PyPDF2
 from PIL import Image
 import fitz  # PyMuPDF
-from azure.ai.formrecognizer import DocumentAnalysisClient
-from azure.core.credentials import AzureKeyCredential
 import base64
 from mimetypes import guess_type
 import unicodedata
@@ -210,8 +208,6 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
     storage_account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
     storage_account_key = os.getenv("AZURE_STORAGE_ACCOUNT_KEY")
     container_name = os.getenv("AZURE_STORAGE_CONTAINER_NAME")
-    doc_intelligence_endpoint = os.getenv("DOC_INTELLIGENCE_ENDPOINT")
-    doc_intelligence_key = os.getenv("DOC_INTELLIGENCE_KEY")
     agent_endpoint = os.getenv("WORKFLOW_EXPLAIN_AGENT_ENDPOINT")
     agent_api_key = os.getenv("API_KEY")
     agent_deployment = os.getenv("WORKFLOW_EXPLAIN_AGENT_DEPLOYMENT")
@@ -252,7 +248,7 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
     image_quality_dpi = int(os.getenv("IMAGE_QUALITY_DPI", "200"))  # Reduced for speed while maintaining quality
     processing_timeout_minutes = int(os.getenv("PROCESSING_TIMEOUT_MINUTES", "25"))  # 5 min buffer for consumption plan
 
-    logging.info(f"Environment variables loaded: Storage Account: {storage_account_name}, Container: {container_name}, Doc Intelligence Endpoint: {doc_intelligence_endpoint}, Agent Endpoint: {agent_endpoint}, Search Endpoint: {search_endpoint}")
+    logging.info(f"Environment variables loaded: Storage Account: {storage_account_name}, Container: {container_name}, Agent Endpoint: {agent_endpoint}, Search Endpoint: {search_endpoint}")
 
     # Initialize clients
     blob_service_client = BlobServiceClient(account_url=f"https://{storage_account_name}.blob.core.windows.net", credential=storage_account_key)
@@ -280,12 +276,6 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
         api_version=embedding_model_api_version,
         azure_endpoint=embedding_model_endpoint,
         api_key=embedding_model_api_key,
-    )
-
-    # Initialize Document Analysis Client
-    form_recognizer_client = DocumentAnalysisClient(
-        endpoint=doc_intelligence_endpoint,
-        credential=AzureKeyCredential(doc_intelligence_key)
     )
 
     # Read agent prompt once at startup
@@ -359,12 +349,12 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
                 logging.info(f"Document {doc_name} already fully processed. Skipping.")
                 continue
             
-            # Analyze document with Form Recognizer
+            # Get page count using PyMuPDF (fitz) - much faster and free
             try:
-                poller = form_recognizer_client.begin_analyze_document("prebuilt-layout", document=doc_content)
-                result = poller.result()
-                total_pages = len(result.pages)
-                logging.info(f"Document analysis completed for: {doc_name}. Total pages: {total_pages}")
+                pdf_doc = fitz.open(stream=doc_content, filetype="pdf")
+                total_pages = len(pdf_doc)
+                pdf_doc.close()  # Clean up immediately
+                logging.info(f"Document page count analysis completed for: {doc_name}. Total pages: {total_pages}")
                 
                 # Update state with total pages
                 if table_client:
