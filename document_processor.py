@@ -415,6 +415,7 @@ def process_documents(args):
     search_index_name = os.getenv("AZURE_SEARCH_AI_INDEX_NAME")
     search_endpoint = os.getenv("AZURE_SEARCH_AI_ENDPOINT")
     search_api_key = os.getenv("AZURE_SEARCH_AI_API_KEY")
+    ocp_apim_subs_key = os.getenv("Ocp-Apim-Subscription-Key")
     search_api_version = os.getenv("AZURE_SEARCH_AI_API_VERSION")
 
     # API Management
@@ -629,12 +630,16 @@ def process_documents(args):
                         retry_delay = 1
                         
                         for attempt in range(max_retries):
-                            url = f"{search_endpoint}/searchindex/{search_index_name}/docs({api_management_key})?api-version={search_api_version}"
-                            logging.info(f'Making request to: {url}')
+                            url = f"{search_endpoint}/searchindex/{search_index_name}/docs/search.index?api-version={search_api_version}"
+                            logging.info(f'Making request to: {url}\nwith APIM Subscription key = {ocp_apim_subs_key}')
                             try:
                                 search_response = requests.post(
                                     url=url,
-                                    headers={"Content-Type": "application/json", "api-key": search_api_key},
+                                    headers={
+                                        "Content-Type": "application/json",
+                                        "Ocp-Apim-Subscription-Key": ocp_apim_subs_key
+
+                                    },
                                     json=payload,
                                     timeout=30
                                 )
