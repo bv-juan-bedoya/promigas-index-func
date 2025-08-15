@@ -263,13 +263,13 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
     embedding_model_endpoint = os.getenv("EMBEDDING_MODEL_ENDPOINT")
     embedding_model_api_key = os.getenv("EMBEDDING_MODEL_API_KEY")
     embedding_model_api_version = os.getenv("EMBEDDING_MODEL_API_VERSION")
-    
+
     # SharePoint environment variables for Graph API
     sharepoint_scope = os.getenv("SHAREPOINT_SCOPE", "https://graph.microsoft.com/.default")
     sharepoint_dominio = os.getenv("SHAREPOINT_DOMINIO", "")
     sharepoint_site = os.getenv("SHAREPOINT_SITE", "")
     sharepoint_folder_name = os.getenv("SHAREPOINT_FOLDER_NAME", "")
-    
+
     # SharePoint credentials from Key Vault (recommended) or environment variables (fallback)
     try:
         sharepoint_tenant_id = get_kv_variable("Tenantid-secret")

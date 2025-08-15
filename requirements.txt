@@ -1,4 +1,5 @@
 azure-functions
+azure-functions-runtime
 azure-storage-blob
 azure-data-tables
 azure.keyvault
@@ -11,3 +12,4 @@ PyMuPDF
 azure-ai-formrecognizer
 Office365-REST-Python-Client
 azure-core
+dotenv
