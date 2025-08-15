@@ -252,8 +252,6 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
     storage_account_name = os.getenv("AZURE_STORAGE_ACCOUNT_NAME")
     storage_account_key = os.getenv("AZURE_STORAGE_ACCOUNT_KEY")
     container_name = os.getenv("AZURE_STORAGE_CONTAINER_NAME")
-    cv_endpoint = os.getenv("CV_API_ENDPOINT")
-    cv_api_key = os.getenv("CV_API_KEY")
     agent_endpoint = os.getenv("WORKFLOW_EXPLAIN_AGENT_ENDPOINT")
     agent_api_key = os.getenv("API_KEY")
     agent_deployment = os.getenv("WORKFLOW_EXPLAIN_AGENT_DEPLOYMENT")
@@ -294,7 +292,7 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
     image_quality_dpi = int(os.getenv("IMAGE_QUALITY_DPI", "200"))  # Reduced for speed while maintaining quality
     processing_timeout_minutes = int(os.getenv("PROCESSING_TIMEOUT_MINUTES", "25"))  # 5 min buffer for consumption plan
 
-    logging.info(f"Environment variables loaded: Storage Account: {storage_account_name}, Container: {container_name}, CV Endpoint: {cv_endpoint}, Agent Endpoint: {agent_endpoint}, Search Endpoint: {search_endpoint}")
+    logging.info(f"Environment variables loaded: Storage Account: {storage_account_name}, Container: {container_name}, Agent Endpoint: {agent_endpoint}, Search Endpoint: {search_endpoint}")
 
     # Initialize clients
     blob_service_client = BlobServiceClient(account_url=f"https://{storage_account_name}.blob.core.windows.net", credential=storage_account_key)
