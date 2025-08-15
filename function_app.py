@@ -7,6 +7,7 @@ import json
 import logging
 import time
 import hashlib
+import uuid
 from azure.storage.blob import BlobServiceClient
 from azure.data.tables import TableServiceClient
 from openai import AzureOpenAI
@@ -21,6 +22,47 @@ from utils.keyvault import get_kv_variable
 from utils.shp_access import get_access_token, get_site_id, get_drive_id, list_drive_folder
 
 app = func.FunctionApp()
+
+def load_last_files_json():
+    """Load the last_files.json from local file system"""
+    try:
+        with open("last_files.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+        logging.info(f"Successfully loaded local last_files.json with {len(data)} file entries")
+        return data
+    except FileNotFoundError:
+        logging.info("last_files.json not found locally. Creating new tracking file.")
+        # Create empty tracking file
+        empty_data = {}
+        save_last_files_json(empty_data)
+        return empty_data
+    except Exception as e:
+        logging.error(f"Error loading last_files.json: {e}. Starting with empty tracking.")
+        return {}
+
+def save_last_files_json(last_files_data: dict):
+    """Save the last_files.json to local file system"""
+    try:
+        with open("last_files.json", "w", encoding="utf-8") as f:
+            json.dump(last_files_data, f, indent=2, ensure_ascii=False)
+        logging.info(f"Updated local last_files.json with current progress")
+    except Exception as e:
+        logging.error(f"Error saving last_files.json: {e}")
+
+def update_file_progress(file_name: str, current_page: int):
+    """Update the progress for a specific file in last_files.json"""
+    try:
+        # Load current data
+        last_files_data = load_last_files_json()
+        
+        # Update the specific file
+        last_files_data[file_name] = current_page
+        
+        # Save back to local file
+        save_last_files_json(last_files_data)
+        logging.info(f"Updated progress for {file_name}: page {current_page}")
+    except Exception as e:
+        logging.error(f"Error updating file progress: {e}")
 
 def get_document_hash(file_content: bytes) -> str:
     """Generate a hash for document content to track changes"""
@@ -99,7 +141,9 @@ def get_sharepoint_documents(tenant_id: str, client_id: str, client_secret: str,
             if file_path.lower().endswith('.pdf'):
                 try:
                     # Get file details using Graph API
-                    file_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{file_path}"
+                    # Clean the file path to ensure proper URL construction
+                    clean_file_path = file_path.strip().lstrip('/')
+                    file_url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{clean_file_path}"
                     headers = {"Authorization": f"Bearer {token}"}
                     
                     file_response = requests.get(file_url, headers=headers)
@@ -214,9 +258,9 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
     agent_api_key = os.getenv("API_KEY")
     agent_deployment = os.getenv("WORKFLOW_EXPLAIN_AGENT_DEPLOYMENT")
     agent_api_version = os.getenv("WORKFLOW_EXPLAIN_AGENT_API_VERSION")
-    search_index_name = os.getenv("AZURE_SEARCH_INDEX_NAME")
-    search_endpoint = os.getenv("AZURE_SEARCH_ENDPOINT")
-    search_api_key = os.getenv("AZURE_SEACRH_API_KEY")
+    search_index_name = os.getenv("AZURE_SEARCH_AI_INDEX_NAME")
+    search_endpoint = os.getenv("AZURE_SEARCH_AI_ENDPOINT")
+    search_api_key = os.getenv("AZURE_SEARCH_AI_API_KEY")
     embedding_model_deployment = os.getenv("EMBEDDING_MODEL_DEPLOYMENT")
     embedding_model_endpoint = os.getenv("EMBEDDING_MODEL_ENDPOINT")
     embedding_model_api_key = os.getenv("EMBEDDING_MODEL_API_KEY")
@@ -230,9 +274,9 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
     
     # SharePoint credentials from Key Vault (recommended) or environment variables (fallback)
     try:
-        sharepoint_tenant_id = get_kv_variable("TENANT_ID")
-        sharepoint_client_id = get_kv_variable("CLIENT_ID")
-        sharepoint_client_secret = get_kv_variable("CLIENT_SECRET")
+        sharepoint_tenant_id = get_kv_variable("Tenantid-secret")
+        sharepoint_client_id = get_kv_variable("ApplicationId-secret")
+        sharepoint_client_secret = get_kv_variable("ValueClient-secret")
         logging.info("✅ Successfully retrieved SharePoint credentials from Key Vault")
     except Exception as kv_error:
         logging.warning(f"⚠️ Failed to retrieve credentials from Key Vault: {kv_error}")
@@ -326,6 +370,10 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
     
     logging.info(f"Found {len(documents)} PDF documents to process")
     
+    # Load file processing tracking from local file
+    last_files_data = load_last_files_json()
+    logging.info(f"File tracking enabled. Loaded tracking data: {last_files_data}")
+    
     try:
         for doc_info in documents:
             # Check execution time limit
@@ -347,16 +395,23 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
             # Check processing state
             last_processed_page, is_completed = get_processing_state(table_client, doc_name, doc_hash) if table_client else (0, False)
             
-            if is_completed:
-                logging.info(f"Document {doc_name} already fully processed. Skipping.")
-                continue
-            
             # Get page count using PyMuPDF (fitz) - much faster and free
             try:
                 pdf_doc = fitz.open(stream=doc_content, filetype="pdf")
                 total_pages = len(pdf_doc)
                 pdf_doc.close()  # Clean up immediately
                 logging.info(f"Document page count analysis completed for: {doc_name}. Total pages: {total_pages}")
+                
+                # Check last_files.json tracking
+                last_processed_from_json = last_files_data.get(doc_name, 0)
+                logging.info(f"File {doc_name}: Last processed page from JSON: {last_processed_from_json}, Total pages: {total_pages}")
+                
+                # Use the maximum of both tracking methods for safety
+                last_processed_page = max(last_processed_page, last_processed_from_json)
+                
+                if last_processed_page >= total_pages:
+                    logging.info(f"Document {doc_name} already fully processed (page {last_processed_page}/{total_pages}). Skipping.")
+                    continue
                 
                 # Update state with total pages
                 if table_client:
@@ -399,23 +454,27 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
                     # Minimal delay to avoid overwhelming APIs
                     time.sleep(0.5)
 
-                    # Send the image data URL to the agent for explanation
-                    agent_response = openai_client.chat.completions.create(
-                        messages=[
-                            {"role": "system", "content": agent_prompt},
-                            {"role": "user", "content": [
-                                {"type": "text", "text": "Por favor, analiza esta imagen."},
-                                {"type": "image_url", "image_url": {"url": image_data_url}}
-                            ]}
-                        ],
-                        max_tokens=3000,  # Optimized for speed vs quality
-                        temperature=0.0,
-                        model=agent_deployment
-                    )
-                    
-                    # Process explanation
-                    raw_explanation = agent_response.choices[0].message.content
-                    explanation = deep_unicode_clean(raw_explanation)
+                    try:
+                        # Send the image data URL to the agent for explanation
+                        agent_response = openai_client.chat.completions.create(
+                            messages=[
+                                {"role": "system", "content": agent_prompt},
+                                {"role": "user", "content": [
+                                    {"type": "text", "text": "Por favor, analiza esta imagen."},
+                                    {"type": "image_url", "image_url": {"url": image_data_url}}
+                                ]}
+                            ],
+                            max_tokens=3000,  # Optimized for speed vs quality
+                            temperature=0.0,
+                            model=agent_deployment
+                        )
+                        logging.info(f'agent response: {agent_response.choices[0].message.content[:100]}...')  # Log first 100 chars for brevity
+                    except Exception as e:
+                        logging.error(f"Error occurred while getting agent response: {e}")
+                    finally:
+                        # Process explanation
+                        raw_explanation = agent_response.choices[0].message.content
+                        explanation = deep_unicode_clean(raw_explanation)
 
                     # Generate embedding
                     try:
@@ -428,46 +487,88 @@ def time_trigg_func(myTimer: func.TimerRequest) -> None:
                         logging.error(f"Error generating embedding for page {page_idx + 1}: {e}")
                         embedding_vector = None
 
-                    # Sanitize the document key
-                    sanitized_doc_name = ''.join(
-                        c if c.isalnum() or c in ['_', '-', '='] else '_' 
-                        for c in unicodedata.normalize('NFKD', doc_name).encode('ascii', 'ignore').decode('ascii')
-                    )
-                    document_id = f"{sanitized_doc_name}_page{page_idx + 1}_image"
+                    # Generate UUID for document ID
+                    document_id = str(uuid.uuid4())
+
+                    # Extract title from filename using regex
+                    title_pattern = r'^[A-Z]{3}-\d+(?: - \d+)? - (.*?)(?: - \d{2}[.-]\d{2}[.-]\d{4})?\.pdf$'
+                    title_match = re.match(title_pattern, doc_name)
+                    if title_match:
+                        extracted_title = title_match.group(1).strip()
+                        document_title = f"Page {page_idx + 1} of {extracted_title}"
+                    else:
+                        # Fallback to original format if regex doesn't match
+                        document_title = f"Page {page_idx + 1} of {doc_name}"
 
                     # Prepare payload for Azure Search
                     payload = {
                         "value": [{
                             "id": document_id,
-                            "metadata_spo_item_path": f"sharepoint://{doc_name}",
+                            "metadata_spo_item_name": doc_name,
+                            "metadata_spo_item_path": doc_info.get('web_url', f"https://{sharepoint_dominio}.sharepoint.com/sites/{sharepoint_site}/Documentos%20Compartidos/{sharepoint_folder_name}/{doc_name}"),
                             "metadata_spo_item_created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
                             "metadata_spo_item_last_modified": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                            "metadata_spo_item_title": f"Page {page_idx + 1} of {doc_name}",
+                            "metadata_spo_item_title": document_title,
                             "metadata_spo_item_content": explanation,
                             "embedding": embedding_vector if embedding_vector else []
                         }]
                     }
+                    # logging.info(f"Prepared payload for Azure Search: {payload}")
+                    # Index in Azure Search with retry logic
+                    max_retries = 3
+                    retry_delay = 1
+                    
+                    for attempt in range(max_retries):
+                        try:
+                            search_response = requests.post(
+                                f"{search_endpoint}/searchindex/{search_index_name}/docs/index?api-version=2021-04-30-Preview",
+                                headers={"Content-Type": "application/json", "api-key": search_api_key},
+                                json=payload,
+                                timeout=30
+                            )
 
-                    # Index in Azure Search
-                    search_response = requests.post(
-                        f"{search_endpoint}/indexes/{search_index_name}/docs/index?api-version=2021-04-30-Preview",
-                        headers={"Content-Type": "application/json", "api-key": search_api_key},
-                        json=payload,
-                        timeout=30
-                    )
-
-                    if search_response.status_code == 200:
-                        logging.info(f"Indexed page {page_idx + 1} successfully.")
-                        pages_processed += 1
-                        
-                        # Update progress in state
-                        if table_client:
-                            status = 'completed' if page_idx + 1 == total_pages else 'processing'
-                            update_processing_state(table_client, doc_name, doc_hash, page_idx + 1, total_pages, status)
-                        
-                    else:
-                        logging.error(f"Failed to index page {page_idx + 1}. Status: {search_response.status_code}")
-                        # Don't break on indexing errors, continue with next page
+                            if search_response.status_code == 200:
+                                logging.info(f"Indexed page {page_idx + 1} successfully.")
+                                pages_processed += 1
+                                
+                                # Update progress in both state table and file tracking
+                                if table_client:
+                                    status = 'completed' if page_idx + 1 == total_pages else 'processing'
+                                    update_processing_state(table_client, doc_name, doc_hash, page_idx + 1, total_pages, status)
+                                
+                                # Update file progress in local file
+                                update_file_progress(doc_name, page_idx + 1)
+                                
+                                break  # Success, exit retry loop
+                                
+                            elif search_response.status_code == 403:
+                                logging.error(f"Access denied to Azure Search. Check networking settings. Status: {search_response.status_code}, Response: {search_response.text}")
+                                if attempt < max_retries - 1:
+                                    logging.info(f"Retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                                    time.sleep(retry_delay)
+                                    retry_delay *= 2  # Exponential backoff
+                                else:
+                                    logging.error(f"Failed to index page {page_idx + 1} after {max_retries} attempts. Continuing with next page.")
+                            else:
+                                logging.error(f"Failed to index page {page_idx + 1}. Status: {search_response.status_code}, Response: {search_response.text}")
+                                if attempt < max_retries - 1:
+                                    logging.info(f"Retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                                    time.sleep(retry_delay)
+                                    retry_delay *= 2
+                                else:
+                                    logging.error(f"Failed to index page {page_idx + 1} after {max_retries} attempts. Continuing with next page.")
+                                    
+                        except requests.exceptions.RequestException as e:
+                            logging.error(f"Network error during indexing attempt {attempt + 1}: {e}")
+                            if attempt < max_retries - 1:
+                                logging.info(f"Retrying in {retry_delay} seconds...")
+                                time.sleep(retry_delay)
+                                retry_delay *= 2
+                            else:
+                                logging.error(f"Failed to index page {page_idx + 1} after {max_retries} attempts due to network errors.")
+                        except Exception as e:
+                            logging.error(f"Unexpected error during indexing: {e}")
+                            break  # Don't retry on unexpected errors
 
                 except Exception as e:
                     logging.error(f"Error processing page {page_idx + 1} of document {doc_name}: {e}")

@@ -42,21 +42,43 @@ def list_drive_folder(
 ):
     if file_counter is None:
         file_counter = {"count": 0}
-    url = (
-        f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:"
-        f"/{folder_path}:/children"
-    )
+    
+    # Handle empty folder path or root access
+    if not folder_path or folder_path.strip() == "":
+        url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root/children"
+        current_folder = ""
+    else:
+        # Ensure folder_path doesn't start with a slash and construct the URL
+        clean_folder_path = folder_path.strip().lstrip('/')
+        url = (
+            f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:"
+            f"/{clean_folder_path}:/children"
+        )
+        current_folder = clean_folder_path
+    
     headers = {"Authorization": f"Bearer {access_token}"}
     resp = requests.get(url, headers=headers)
     resp.raise_for_status()
     items = resp.json().get("value", [])
     items_list = []
+    
     for item in items:
-        item_path = f"{parent_path}/{item['name']}".lstrip("/")
+        # Build the full path including the current folder
+        if current_folder:
+            if parent_path:
+                item_path = f"{parent_path}/{item['name']}"
+            else:
+                item_path = f"{current_folder}/{item['name']}"
+        else:
+            item_path = f"{parent_path}/{item['name']}".lstrip("/")
+            
         if "folder" in item:
             # print(f"Carpeta: {item_path}")
             # Recursivamente listar el contenido de la subcarpeta
-            subfolder_path = f"{folder_path}/{item['name']}"
+            if current_folder:
+                subfolder_path = f"{current_folder}/{item['name']}"
+            else:
+                subfolder_path = item['name']
             list_drive_folder(
                 access_token, drive_id, subfolder_path, item_path, file_counter
             )
