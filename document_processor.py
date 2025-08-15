@@ -415,7 +415,11 @@ def process_documents(args):
     search_index_name = os.getenv("AZURE_SEARCH_AI_INDEX_NAME")
     search_endpoint = os.getenv("AZURE_SEARCH_AI_ENDPOINT")
     search_api_key = os.getenv("AZURE_SEARCH_AI_API_KEY")
-    
+    search_api_version = os.getenv("AZURE_SEARCH_AI_API_VERSION")
+
+    # API Management
+    api_management_key = os.getenv("API_MANAGEMENT_KEY")
+
     # Model configurations
     agent_deployment = os.getenv("WORKFLOW_EXPLAIN_AGENT_DEPLOYMENT")
     embedding_model_deployment = os.getenv("EMBEDDING_MODEL_DEPLOYMENT")
@@ -625,9 +629,11 @@ def process_documents(args):
                         retry_delay = 1
                         
                         for attempt in range(max_retries):
+                            url = f"{search_endpoint}/searchindex/{search_index_name}/docs({api_management_key})?api-version={search_api_version}"
+                            logging.info(f'Making request to: {url}')
                             try:
                                 search_response = requests.post(
-                                    f"{search_endpoint}/indexes/{search_index_name}/docs/index?api-version=2021-04-30-Preview",
+                                    url=url,
                                     headers={"Content-Type": "application/json", "api-key": search_api_key},
                                     json=payload,
                                     timeout=30
